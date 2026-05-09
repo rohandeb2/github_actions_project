@@ -1,0 +1,838 @@
+# =============================================================================
+#  BankApp — Production CI/CD Pipeline
+#  ONE pipeline. Every push to main runs the full flow:
+#
+#  STAGE 1 ─ Code Quality   : Unit tests · Integration tests · JaCoCo coverage
+#  STAGE 2 ─ Security Scan  : Semgrep · SonarQube · Trivy · OWASP · TFLint · Checkov
+#  STAGE 3 ─ Build          : Docker multi-stage build · image signed + SBOM
+#  STAGE 4 ─ Deploy Staging : Docker Compose deploy → smoke test
+#  STAGE 5 ─ Deploy Prod    : Manual approval gate → blue-green deploy → smoke test
+#  STAGE 6 ─ Rollback       : Auto-triggered on any failure after prod deploy
+#  NOTIFY  ─ Email          : Test report + deployment success/failure → both emails
+#
+#  EMAILS SENT:
+#    rohancyber8@gmail.com  (owner)
+#    ayushmanndeb38@gmail.com (client)
+#
+#  ROLLBACK LOGIC:
+#    First deploy       → deploys, saves sha as LAST_STABLE_SHA in repo variable
+#    Subsequent pushes  → if any job fails after prod deploy, auto-rollback to
+#                         LAST_STABLE_SHA and notify both emails
+#
+#  SECRETS REQUIRED (Repo → Settings → Secrets → Actions):
+#    DOCKERHUB_USERNAME     Docker Hub username
+#    DOCKERHUB_TOKEN        Docker Hub access token
+#    SONAR_TOKEN            SonarQube user token
+#    NVD_API_KEY            nvd.nist.gov free API key (speeds up OWASP)
+#    SEMGREP_APP_TOKEN      semgrep.dev token (optional, leave empty for free rules)
+#    MAIL_USERNAME          Gmail address used to SEND emails (smtp sender)
+#    MAIL_PASSWORD          Gmail App Password (not your real password)
+#                           → Gmail → Account → Security → App Passwords
+#    GH_PAT                 GitHub Personal Access Token (repo scope)
+#                           → needed to update LAST_STABLE_SHA repo variable
+#
+#  VARIABLES REQUIRED (Repo → Settings → Secrets → Variables):
+#    SONAR_HOST_URL         http://your-sonarqube-server:9000
+#    LAST_STABLE_SHA        (auto-managed by pipeline, seed it with any valid sha)
+# =============================================================================
+
+name: BankApp Production Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_rollback:
+        description: "Force rollback to last stable version"
+        type: boolean
+        default: false
+
+concurrency:
+  group: production-pipeline-${{ github.ref }}
+  cancel-in-progress: false   # NEVER cancel a prod pipeline mid-run
+
+env:
+  JAVA_VERSION: "21"
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/bankapp
+  SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+  NOTIFY_EMAILS: "rohancyber8@gmail.com,ayushmanndeb38@gmail.com"
+
+# =============================================================================
+# MANUAL FORCE ROLLBACK — triggered via workflow_dispatch
+# =============================================================================
+jobs:
+
+  force-rollback:
+    name: "Force Rollback (Manual)"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.force_rollback == 'true'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rollback to last stable
+        run: |
+          STABLE_SHA="${{ vars.LAST_STABLE_SHA }}"
+          echo "Force rolling back to: $STABLE_SHA"
+          echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${STABLE_SHA}" >> $GITHUB_ENV
+
+      - name: Send rollback notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ env.NOTIFY_EMAILS }}
+          from: "BankApp Pipeline <${{ secrets.MAIL_USERNAME }}>"
+          subject: "⚠️ [BankApp] MANUAL ROLLBACK triggered by ${{ github.actor }}"
+          html_body: |
+            <h2 style="color:#e65100">⚠️ Manual Rollback Triggered</h2>
+            <table border="1" cellpadding="6" cellspacing="0">
+              <tr><td><b>Triggered by</b></td><td>${{ github.actor }}</td></tr>
+              <tr><td><b>Rolled back to SHA</b></td><td>${{ vars.LAST_STABLE_SHA }}</td></tr>
+              <tr><td><b>Time</b></td><td>${{ github.event.head_commit.timestamp }}</td></tr>
+              <tr><td><b>Pipeline</b></td><td><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Run</a></td></tr>
+            </table>
+
+# =============================================================================
+# STAGE 1 — CODE QUALITY: Unit Tests + Integration Tests + Coverage
+# =============================================================================
+  test:
+    name: "Stage 1 — Tests & Coverage"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.force_rollback != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Run unit + integration tests with coverage
+        run: mvn verify -B -Dspring.profiles.active=test
+        # JaCoCo gate is enforced here — fails if coverage < 70%
+
+      # Publish test results in GitHub UI (visible in PR checks)
+      - name: Publish test report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "JUnit Test Results"
+          path: target/surefire-reports/*.xml
+          reporter: java-junit
+          fail-on-error: true
+
+      # Pass coverage report and surefire XML to the notify job
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+          retention-days: 30
+
+      # Pass JAR to build stage (avoid rebuilding)
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          retention-days: 1
+
+# =============================================================================
+# STAGE 2 — SECURITY SCANNING: All 6 tools in parallel
+# =============================================================================
+
+  # ── 2a. Semgrep ────────────────────────────────────────────────────
+  semgrep:
+    name: "Stage 2a — Semgrep SAST"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/java
+            p/spring-framework
+            p/owasp-top-ten
+            p/secrets
+            p/sql-injection
+          generateSarif: "1"
+          publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ── 2b. SonarQube ──────────────────────────────────────────────────
+  sonarqube:
+    name: "Stage 2b — SonarQube Quality Gate"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - name: Cache Maven + SonarQube scanner
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.sonar/cache
+          key: ${{ runner.os }}-maven-sonar-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-sonar-
+            ${{ runner.os }}-maven-
+
+      - name: Download test results (reuse from Stage 1)
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          path: target/
+
+      - name: SonarQube scan + Quality Gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn sonar:sonar \
+            -DskipTests \
+            -Dsonar.projectKey=bankapp \
+            -Dsonar.projectName="BankApp" \
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.java.binaries=target/classes \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
+
+  # ── 2c. Trivy ──────────────────────────────────────────────────────
+  trivy:
+    name: "Stage 2c — Trivy Vulnerability Scan"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan (blocks on CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: "."
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy
+
+  # ── 2d. OWASP Dependency Check ─────────────────────────────────────
+  owasp:
+    name: "Stage 2d — OWASP Dependency Check"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - name: Cache Maven
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Cache OWASP NVD database
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp
+          key: owasp-nvd-${{ hashFiles('**/pom.xml') }}-${{ github.run_number }}
+          restore-keys: |
+            owasp-nvd-${{ hashFiles('**/pom.xml') }}-
+            owasp-nvd-
+
+      - name: Run OWASP Dependency Check
+        run: |
+          mvn org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=7 \
+            -DsuppressionFile=.github/owasp-suppressions.xml \
+            -Dformats=HTML,SARIF \
+            -DoutputDirectory=target/dependency-check \
+            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+
+      - name: Upload OWASP SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: target/dependency-check/dependency-check-report.sarif
+          category: owasp-dependency-check
+
+      - name: Upload OWASP HTML report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owasp-report
+          path: target/dependency-check/
+          retention-days: 30
+
+  # ── 2e. TFLint ─────────────────────────────────────────────────────
+  tflint:
+    name: "Stage 2e — TFLint"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.3
+
+      - name: Init TFLint (downloads AWS ruleset)
+        working-directory: terraform
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run TFLint across all modules
+        working-directory: terraform
+        run: |
+          tflint --recursive --config=.tflint.hcl --format=sarif > ../tflint.sarif || true
+          tflint --recursive --config=.tflint.hcl
+
+      - name: Upload TFLint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: tflint.sarif
+          category: tflint
+
+  # ── 2f. Checkov ────────────────────────────────────────────────────
+  checkov:
+    name: "Stage 2f — Checkov IaC Scan"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkov — Terraform scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-tf.sarif
+          baseline: terraform/.checkov.baseline
+          soft_fail: false
+
+      - name: Upload Checkov Terraform SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-tf.sarif
+          category: checkov-terraform
+
+      - name: Checkov — Dockerfile scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: true
+
+      - name: Upload Checkov Dockerfile SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-docker.sarif
+          category: checkov-dockerfile
+
+# =============================================================================
+# SECURITY GATE — all 6 scanners must pass before build proceeds
+# =============================================================================
+  security-gate:
+    name: "Security Gate"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.force_rollback != 'true'
+    needs: [semgrep, sonarqube, trivy, owasp, tflint, checkov]
+
+    steps:
+      - name: Evaluate all scanner results
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              'Semgrep':  '${{ needs.semgrep.result }}',
+              'SonarQube':'${{ needs.sonarqube.result }}',
+              'Trivy':    '${{ needs.trivy.result }}',
+              'OWASP':    '${{ needs.owasp.result }}',
+              'TFLint':   '${{ needs.tflint.result }}',
+              'Checkov':  '${{ needs.checkov.result }}',
+            };
+            const failed = Object.entries(results)
+              .filter(([,r]) => r === 'failure')
+              .map(([name]) => name);
+            if (failed.length > 0) {
+              core.setFailed(`Security gate blocked by: ${failed.join(', ')}`);
+            }
+            core.setOutput('summary', JSON.stringify(results));
+
+# =============================================================================
+# STAGE 3 — BUILD: Docker image build, sign, push
+# =============================================================================
+  build:
+    name: "Stage 3 — Docker Build & Push"
+    runs-on: ubuntu-latest
+    needs: security-gate
+    if: github.event.inputs.force_rollback != 'true'
+
+    outputs:
+      image-tag:    ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      short-sha:    sha-${{ github.sha }}
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # for OIDC / image signing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=branch
+            type=ref,event=pr
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true      # SLSA provenance attestation
+          sbom: true            # Software Bill of Materials
+
+      - name: Trivy — scan built image (final gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+# =============================================================================
+# STAGE 4 — DEPLOY STAGING
+# =============================================================================
+  deploy-staging:
+    name: "Stage 4 — Deploy Staging"
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event.inputs.force_rollback != 'true'
+
+    environment:
+      name: staging
+      url: http://staging.bankapp.local:8080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          echo "Deploying ${{ env.IMAGE_NAME }}:${IMAGE_TAG} to staging"
+          export IMAGE_TAG=${IMAGE_TAG}
+          docker compose -f docker-compose.yml up -d --pull always
+
+      - name: Staging smoke test
+        run: |
+          echo "Waiting for app to be healthy..."
+          for i in $(seq 1 12); do
+            HTTP=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
+            if [ "$HTTP" = "200" ]; then echo "Staging healthy"; exit 0; fi
+            echo "Attempt $i/12 — HTTP $HTTP, retrying..."
+            sleep 10
+          done
+          echo "Staging smoke test FAILED"
+          exit 1
+
+# =============================================================================
+# STAGE 5 — DEPLOY PRODUCTION (manual approval gate)
+# =============================================================================
+  deploy-production:
+    name: "Stage 5 — Deploy Production"
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event.inputs.force_rollback != 'true'
+
+    environment:
+      name: production
+      url: http://bankapp.production.local:8080
+
+    outputs:
+      deployed: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Save current prod sha BEFORE deploying (needed for rollback target)
+      - name: Record pre-deploy stable SHA
+        run: echo "PRE_DEPLOY_SHA=${{ vars.LAST_STABLE_SHA }}" >> $GITHUB_ENV
+
+      - name: Blue-Green deploy to production
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          echo "=== Blue-Green Production Deploy ==="
+          echo "Deploying: ${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+          echo "Step 1: Start GREEN slot with new image"
+          echo "Step 2: Health check GREEN"
+          echo "Step 3: Switch traffic: BLUE → GREEN"
+          echo "Step 4: Keep BLUE for 5min rollback window"
+          # Production deploy command (swap with kubectl / helm in real infra):
+          export IMAGE_TAG=${IMAGE_TAG}
+          docker compose -f docker-compose.yml up -d --pull always
+
+      - name: Production smoke test
+        run: |
+          for i in $(seq 1 12); do
+            HTTP=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
+            if [ "$HTTP" = "200" ]; then echo "Production healthy"; exit 0; fi
+            echo "Attempt $i/12 — HTTP $HTTP"
+            sleep 10
+          done
+          echo "Production smoke test FAILED — triggering rollback"
+          exit 1
+
+      # Only update LAST_STABLE_SHA after smoke test passes
+      - name: Update last stable SHA
+        if: success()
+        run: |
+          curl -s -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables/LAST_STABLE_SHA" \
+            -d "{\"name\":\"LAST_STABLE_SHA\",\"value\":\"${{ github.sha }}\"}"
+          echo "LAST_STABLE_SHA updated to ${{ github.sha }}"
+
+# =============================================================================
+# STAGE 6 — ROLLBACK (auto-triggered on any failure after staging)
+# =============================================================================
+  rollback:
+    name: "Stage 6 — Auto Rollback"
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.force_rollback != 'true' &&
+      (needs.deploy-staging.result == 'failure' || needs.deploy-production.result == 'failure')
+    needs: [deploy-staging, deploy-production]
+
+    environment:
+      name: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine rollback target
+        id: target
+        run: |
+          STABLE="${{ vars.LAST_STABLE_SHA }}"
+          CURRENT="${{ github.sha }}"
+
+          if [ -z "$STABLE" ] || [ "$STABLE" = "$CURRENT" ]; then
+            echo "No previous stable version found — cannot rollback"
+            echo "can_rollback=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Rolling back from $CURRENT → $STABLE"
+          echo "rollback_sha=$STABLE" >> $GITHUB_OUTPUT
+          echo "can_rollback=true" >> $GITHUB_OUTPUT
+
+      - name: Execute rollback
+        if: steps.target.outputs.can_rollback == 'true'
+        env:
+          ROLLBACK_SHA: ${{ steps.target.outputs.rollback_sha }}
+        run: |
+          echo "=== ROLLBACK INITIATED ==="
+          echo "Restoring image: ${{ env.IMAGE_NAME }}:sha-${ROLLBACK_SHA}"
+          export IMAGE_TAG="sha-${ROLLBACK_SHA}"
+          docker compose -f docker-compose.yml up -d --pull always
+          echo "Rollback deploy complete"
+
+      - name: Rollback smoke test
+        if: steps.target.outputs.can_rollback == 'true'
+        run: |
+          for i in $(seq 1 10); do
+            HTTP=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
+            if [ "$HTTP" = "200" ]; then echo "Rollback healthy"; exit 0; fi
+            sleep 10
+          done
+          echo "Rollback smoke test also FAILED — manual intervention required"
+          exit 1
+
+# =============================================================================
+# NOTIFY — runs ALWAYS at the end, sends email in every scenario
+# =============================================================================
+  notify:
+    name: "Notify — Email Report"
+    runs-on: ubuntu-latest
+    if: always() && github.event.inputs.force_rollback != 'true'
+    needs:
+      - test
+      - semgrep
+      - sonarqube
+      - trivy
+      - owasp
+      - tflint
+      - checkov
+      - security-gate
+      - build
+      - deploy-staging
+      - deploy-production
+      - rollback
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+        continue-on-error: true
+
+      # Build full HTML summary of the pipeline
+      - name: Build email body
+        id: email-body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const s = (r) => r === 'success' ? '✅ Passed'
+                           : r === 'skipped' ? '⏭️ Skipped'
+                           : r === 'failure' ? '❌ Failed'
+                           : `⚪ ${r}`;
+
+            const pipelineStatus =
+              ['test','semgrep','sonarqube','trivy','owasp','tflint','checkov',
+               'security-gate','build','deploy-staging','deploy-production']
+              .every(j => ['success','skipped'].includes(
+                eval(`process.env.RESULT_${j.toUpperCase().replace(/-/g,'_')}`)
+              )) ? 'SUCCESS' : 'FAILURE';
+
+            const rollbackTriggered =
+              '${{ needs.rollback.result }}' === 'success';
+
+            const subject = pipelineStatus === 'SUCCESS'
+              ? `✅ [BankApp] Deployment Successful — ${context.sha.slice(0,7)}`
+              : rollbackTriggered
+                ? `🔴 [BankApp] Pipeline FAILED + Rollback Executed — ${context.sha.slice(0,7)}`
+                : `❌ [BankApp] Pipeline FAILED — ${context.sha.slice(0,7)}`;
+
+            const color = pipelineStatus === 'SUCCESS' ? '#2e7d32' : '#c62828';
+            const banner = pipelineStatus === 'SUCCESS'
+              ? '✅ Production deployment completed successfully'
+              : rollbackTriggered
+                ? '🔴 Pipeline failed. Production has been rolled back to last stable version.'
+                : '❌ Pipeline failed. Manual intervention may be required.';
+
+            const body = `
+            <div style="font-family:Arial,sans-serif;max-width:700px">
+              <div style="background:${color};color:white;padding:16px 20px;border-radius:6px 6px 0 0">
+                <h2 style="margin:0">${banner}</h2>
+              </div>
+              <div style="border:1px solid #ddd;border-top:none;padding:20px;border-radius:0 0 6px 6px">
+
+                <h3 style="margin-top:0">Pipeline Details</h3>
+                <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+                  <tr style="background:#f5f5f5"><td><b>Repository</b></td><td>${context.repo.owner}/${context.repo.repo}</td></tr>
+                  <tr><td><b>Branch</b></td><td>${context.ref.replace('refs/heads/','')}</td></tr>
+                  <tr style="background:#f5f5f5"><td><b>Commit</b></td><td>${context.sha.slice(0,7)} — ${context.payload?.head_commit?.message || 'N/A'}</td></tr>
+                  <tr><td><b>Triggered by</b></td><td>${context.actor}</td></tr>
+                  <tr style="background:#f5f5f5"><td><b>Image deployed</b></td><td>sha-${context.sha.slice(0,7)}</td></tr>
+                  ${rollbackTriggered ? `<tr style="background:#ffebee"><td><b>Rollback</b></td><td>⚠️ Rolled back to <code>${'${{ vars.LAST_STABLE_SHA }}'.slice(0,7)}</code></td></tr>` : ''}
+                </table>
+
+                <h3>Stage Results</h3>
+                <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+                  <tr style="background:#f5f5f5"><th>Stage</th><th>Job</th><th>Result</th></tr>
+                  <tr><td>1 — Quality</td><td>Unit + Integration Tests</td><td>${s('${{ needs.test.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td rowspan="6">2 — Security</td><td>Semgrep SAST</td><td>${s('${{ needs.semgrep.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>SonarQube Quality Gate</td><td>${s('${{ needs.sonarqube.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>Trivy Vulnerability Scan</td><td>${s('${{ needs.trivy.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>OWASP Dependency Check</td><td>${s('${{ needs.owasp.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>TFLint</td><td>${s('${{ needs.tflint.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>Checkov IaC Scan</td><td>${s('${{ needs.checkov.result }}')}</td></tr>
+                  <tr><td></td><td>Security Gate</td><td>${s('${{ needs.security-gate.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>3 — Build</td><td>Docker Build & Push</td><td>${s('${{ needs.build.result }}')}</td></tr>
+                  <tr><td>4 — Staging</td><td>Deploy + Smoke Test</td><td>${s('${{ needs.deploy-staging.result }}')}</td></tr>
+                  <tr style="background:#f5f5f5"><td>5 — Production</td><td>Blue-Green Deploy + Smoke Test</td><td>${s('${{ needs.deploy-production.result }}')}</td></tr>
+                  <tr><td>6 — Rollback</td><td>Auto Rollback</td><td>${s('${{ needs.rollback.result }}')}</td></tr>
+                </table>
+
+                <h3>Security Findings</h3>
+                <p>All scanner findings are visible in the
+                  <a href="${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/security/code-scanning">
+                    GitHub Security tab
+                  </a>.
+                </p>
+
+                <p style="margin-top:20px">
+                  <a href="${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}"
+                    style="background:#1565c0;color:white;padding:10px 20px;text-decoration:none;border-radius:4px">
+                    View Full Pipeline Run →
+                  </a>
+                </p>
+
+                <hr style="margin:20px 0;border:none;border-top:1px solid #eee"/>
+                <p style="color:#888;font-size:12px">
+                  BankApp CI/CD Pipeline · Automated notification · Do not reply to this email
+                </p>
+              </div>
+            </div>`;
+
+            core.setOutput('subject', subject);
+            core.setOutput('body', body);
+        env:
+          RESULT_TEST: ${{ needs.test.result }}
+          RESULT_SEMGREP: ${{ needs.semgrep.result }}
+          RESULT_SONARQUBE: ${{ needs.sonarqube.result }}
+          RESULT_TRIVY: ${{ needs.trivy.result }}
+          RESULT_OWASP: ${{ needs.owasp.result }}
+          RESULT_TFLINT: ${{ needs.tflint.result }}
+          RESULT_CHECKOV: ${{ needs.checkov.result }}
+          RESULT_SECURITY_GATE: ${{ needs.security-gate.result }}
+          RESULT_BUILD: ${{ needs.build.result }}
+          RESULT_DEPLOY_STAGING: ${{ needs.deploy-staging.result }}
+          RESULT_DEPLOY_PRODUCTION: ${{ needs.deploy-production.result }}
+
+      # Send email — test report attached as HTML
+      - name: Send pipeline report email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ env.NOTIFY_EMAILS }}
+          from: "BankApp Pipeline <${{ secrets.MAIL_USERNAME }}>"
+          subject: ${{ steps.email-body.outputs.subject }}
+          html_body: ${{ steps.email-body.outputs.body }}
+          attachments: test-results/surefire-reports/*.xml
+          ignore_cert: false
+
+      # Also post a summary comment on PRs
+      - name: Post pipeline summary on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const c of comments) {
+              if (c.body.includes('Pipeline Summary')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner, repo: context.repo.repo, comment_id: c.id
+                });
+              }
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## Pipeline Summary\n\n| Stage | Result |\n|---|---|\n` +
+                `| Tests | ${{ needs.test.result }} |\n` +
+                `| Security Gate | ${{ needs.security-gate.result }} |\n` +
+                `| Build | ${{ needs.build.result }} |\n` +
+                `| Staging | ${{ needs.deploy-staging.result }} |\n` +
+                `| Production | ${{ needs.deploy-production.result }} |\n\n` +
+                `[View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+            });

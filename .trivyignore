@@ -1,0 +1,8 @@
+# .trivyignore — known accepted vulnerabilities
+# Format: CVE-ID  [expiry-date]  # justification
+#
+# Template:
+# CVE-XXXX-XXXXX exp:2025-12-31  # Accepted: no fix available, not exploitable in our context
+
+# Example (remove when you have real entries):
+# CVE-2023-44487  # HTTP/2 rapid reset — mitigated by ALB rate limiting
