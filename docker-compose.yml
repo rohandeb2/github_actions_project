@@ -1,10 +1,6 @@
 version: "3.9"
 
 services:
-
-  # ─────────────────────────────────────────
-  # PostgreSQL Database
-  # ─────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: bankapp-postgres
@@ -22,11 +18,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─────────────────────────────────────────
-  # pgAdmin — Postgres Web UI
-  # Open: http://localhost:5050
-  # Login: admin@bank.com / admin
-  # ─────────────────────────────────────────
+
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: bankapp-pgadmin
@@ -42,12 +34,6 @@ services:
       - pgadmin_data:/var/lib/pgadmin
       - ./docker/pgadmin-servers.json:/pgadmin4/servers.json
 
-  # ─────────────────────────────────────────
-  # Spring Boot Banking App
-  # Swagger UI: http://localhost:8080/swagger-ui.html
-  # Actuator:   http://localhost:8080/actuator
-  # Health:     http://localhost:8080/actuator/health
-  # ─────────────────────────────────────────
   app:
     build:
       context: .

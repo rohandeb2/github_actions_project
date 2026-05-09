@@ -1,41 +1,3 @@
-# =============================================================================
-#  BankApp — Production CI/CD Pipeline
-#  ONE pipeline. Every push to main runs the full flow:
-#
-#  STAGE 1 ─ Code Quality   : Unit tests · Integration tests · JaCoCo coverage
-#  STAGE 2 ─ Security Scan  : Semgrep · SonarQube · Trivy · OWASP · TFLint · Checkov
-#  STAGE 3 ─ Build          : Docker multi-stage build · image signed + SBOM
-#  STAGE 4 ─ Deploy Staging : Docker Compose deploy → smoke test
-#  STAGE 5 ─ Deploy Prod    : Manual approval gate → blue-green deploy → smoke test
-#  STAGE 6 ─ Rollback       : Auto-triggered on any failure after prod deploy
-#  NOTIFY  ─ Email          : Test report + deployment success/failure → both emails
-#
-#  EMAILS SENT:
-#    rohancyber8@gmail.com  (owner)
-#    ayushmanndeb38@gmail.com (client)
-#
-#  ROLLBACK LOGIC:
-#    First deploy       → deploys, saves sha as LAST_STABLE_SHA in repo variable
-#    Subsequent pushes  → if any job fails after prod deploy, auto-rollback to
-#                         LAST_STABLE_SHA and notify both emails
-#
-#  SECRETS REQUIRED (Repo → Settings → Secrets → Actions):
-#    DOCKERHUB_USERNAME     Docker Hub username
-#    DOCKERHUB_TOKEN        Docker Hub access token
-#    SONAR_TOKEN            SonarQube user token
-#    NVD_API_KEY            nvd.nist.gov free API key (speeds up OWASP)
-#    SEMGREP_APP_TOKEN      semgrep.dev token (optional, leave empty for free rules)
-#    MAIL_USERNAME          Gmail address used to SEND emails (smtp sender)
-#    MAIL_PASSWORD          Gmail App Password (not your real password)
-#                           → Gmail → Account → Security → App Passwords
-#    GH_PAT                 GitHub Personal Access Token (repo scope)
-#                           → needed to update LAST_STABLE_SHA repo variable
-#
-#  VARIABLES REQUIRED (Repo → Settings → Secrets → Variables):
-#    SONAR_HOST_URL         http://your-sonarqube-server:9000
-#    LAST_STABLE_SHA        (auto-managed by pipeline, seed it with any valid sha)
-# =============================================================================
-
 name: BankApp Production Pipeline
 
 on:
@@ -52,7 +14,7 @@ on:
 
 concurrency:
   group: production-pipeline-${{ github.ref }}
-  cancel-in-progress: false   # NEVER cancel a prod pipeline mid-run
+  cancel-in-progress: false  
 
 permissions:
   contents: read
@@ -64,9 +26,7 @@ env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/bankapp
   NOTIFY_EMAILS: "rohancyber8@gmail.com,ayushmanndeb38@gmail.com"
 
-# =============================================================================
-# MANUAL FORCE ROLLBACK — triggered via workflow_dispatch
-# =============================================================================
+
 jobs:
 
   force-rollback:
@@ -103,9 +63,7 @@ jobs:
               <tr><td><b>Pipeline</b></td><td><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Run</a></td></tr>
             </table>
 
-# =============================================================================
-# STAGE 1 — CODE QUALITY: Unit Tests + Integration Tests + Coverage
-# =============================================================================
+
   test:
     name: "Stage 1 — Tests & Coverage"
     runs-on: ubuntu-latest
@@ -132,9 +90,7 @@ jobs:
 
       - name: Run unit + integration tests with coverage
         run: mvn verify -B -Dspring.profiles.active=test
-        # JaCoCo gate is enforced here — fails if coverage < 70%
 
-      # Publish test results in GitHub UI (visible in PR checks)
       - name: Publish test report
         uses: dorny/test-reporter@v1
         if: always()
@@ -144,7 +100,7 @@ jobs:
           reporter: java-junit
           fail-on-error: true
 
-      # Pass coverage report and surefire XML to the notify job
+
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -155,7 +111,6 @@ jobs:
             target/site/jacoco/
           retention-days: 30
 
-      # Pass JAR to build stage (avoid rebuilding)
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
@@ -163,11 +118,6 @@ jobs:
           path: target/*.jar
           retention-days: 1
 
-# =============================================================================
-# STAGE 2 — SECURITY SCANNING: All 6 tools in parallel
-# =============================================================================
-
-  # ── 2a. Semgrep ────────────────────────────────────────────────────
   semgrep:
     name: "Stage 2a — Semgrep SAST"
     runs-on: ubuntu-latest
@@ -200,7 +150,6 @@ jobs:
           sarif_file: semgrep.sarif
           category: semgrep
 
-  # ── 2b. SonarQube ──────────────────────────────────────────────────
   sonarqube:
     name: "Stage 2b — SonarQube Quality Gate"
     runs-on: ubuntu-latest
@@ -244,7 +193,7 @@ jobs:
             -Dsonar.token=$SONAR_TOKEN \
             -Dsonar.java.binaries=target/classes
 
-  # ── 2c. Trivy ──────────────────────────────────────────────────────
+
   trivy:
     name: "Stage 2c — Trivy Vulnerability Scan"
     runs-on: ubuntu-latest
@@ -275,7 +224,7 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy
 
-  # ── 2d. OWASP Dependency Check ─────────────────────────────────────
+
   owasp:
     name: "Stage 2d — OWASP Dependency Check"
     runs-on: ubuntu-latest
@@ -316,7 +265,8 @@ jobs:
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
           key: owasp-nvd-${{ runner.os }}-${{ steps.date.outputs.date }}
-  # ── 2e. TFLint ─────────────────────────────────────────────────────
+
+
   tflint:
     name: "Stage 2e — TFLint"
     runs-on: ubuntu-latest
@@ -339,7 +289,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 🔍 Run scan (capture result but don't fail pipeline)
+
       - name: Run TFLint (generate SARIF + continue)
         working-directory: terraform
         run: |
@@ -350,7 +300,7 @@ jobs:
           echo $EXIT_CODE > ../tflint_exit.txt
           set -e
 
-      # 📤 Upload report
+
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
@@ -358,7 +308,6 @@ jobs:
           sarif_file: tflint.sarif
           category: tflint
 
-      # 📧 Send email if failure detected (example)
       - name: Send failure email
         if: always()
         run: |
@@ -369,8 +318,6 @@ jobs:
             echo "TFLint passed"
           fi
 
-  # ── 2f. Checkov ────────────────────────────────────────────────────
-  # ── 2f. Checkov ────────────────────────────────────────────────────
   checkov:
     name: "Stage 2f — Checkov IaC Scan"
     runs-on: ubuntu-latest
@@ -381,7 +328,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Ensure the terraform directory exists before scanning
       - name: Checkov — Terraform scan
         uses: bridgecrewio/checkov-action@master
         with:
@@ -389,11 +335,11 @@ jobs:
           framework: terraform
           output_format: sarif
           output_file_path: checkov-tf.sarif
-          soft_fail: true # Set to true so a "bad" config doesn't kill the whole job
+          soft_fail: true 
 
       - name: Upload Checkov Terraform SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always() # Run even if scan found bugs
+        if: always() 
         with:
           sarif_file: checkov-tf.sarif
           category: checkov-terraform
@@ -401,7 +347,7 @@ jobs:
       - name: Checkov — Dockerfile scan
         uses: bridgecrewio/checkov-action@master
         with:
-          # Target the specific Dockerfile in your root
+
           file: Dockerfile 
           framework: dockerfile
           output_format: sarif
@@ -414,9 +360,7 @@ jobs:
         with:
           sarif_file: checkov-docker.sarif
           category: checkov-dockerfile
-# =============================================================================
-# SECURITY GATE — all 6 scanners must pass before build proceeds
-# =============================================================================
+
   security-gate:
     name: "Security Gate"
     runs-on: ubuntu-latest
@@ -445,9 +389,7 @@ jobs:
             }
             core.setOutput('summary', JSON.stringify(results));
 
-# =============================================================================
-# STAGE 3 — BUILD: Docker image build, sign, push
-# =============================================================================
+
   build:
     name: "Stage 3 — Docker Build & Push"
     runs-on: ubuntu-latest
@@ -509,9 +451,7 @@ jobs:
           exit-code: "0"
           severity: CRITICAL
 
-# =============================================================================
-# STAGE 4 — DEPLOY STAGING
-# =============================================================================
+
   deploy-staging:
     name: "Stage 4 — Deploy Staging"
     runs-on: ubuntu-latest
@@ -545,9 +485,7 @@ jobs:
           echo "Staging smoke test FAILED"
           exit 1
 
-# =============================================================================
-# STAGE 5 — DEPLOY PRODUCTION (manual approval gate)
-# =============================================================================
+
   deploy-production:
     name: "Stage 5 — Deploy Production"
     runs-on: ubuntu-latest
@@ -564,7 +502,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Save current prod sha BEFORE deploying (needed for rollback target)
       - name: Record pre-deploy stable SHA
         run: echo "PRE_DEPLOY_SHA=${{ vars.LAST_STABLE_SHA }}" >> $GITHUB_ENV
 
@@ -593,7 +530,7 @@ jobs:
           echo "Production smoke test FAILED — triggering rollback"
           exit 1
 
-      # Only update LAST_STABLE_SHA after smoke test passes
+
       - name: Update last stable SHA
         if: success()
         run: |
@@ -604,9 +541,7 @@ jobs:
             -d "{\"name\":\"LAST_STABLE_SHA\",\"value\":\"${{ github.sha }}\"}"
           echo "LAST_STABLE_SHA updated to ${{ github.sha }}"
 
-# =============================================================================
-# STAGE 6 — ROLLBACK (auto-triggered on any failure after staging)
-# =============================================================================
+
   rollback:
     name: "Stage 6 — Auto Rollback"
     runs-on: ubuntu-latest
@@ -661,9 +596,7 @@ jobs:
           echo "Rollback smoke test also FAILED — manual intervention required"
           exit 1
 
-# =============================================================================
-# NOTIFY — runs ALWAYS at the end, sends email in every scenario
-# =============================================================================
+
   notify:
     name: "Notify — Email Report"
     runs-on: ubuntu-latest
@@ -693,7 +626,6 @@ jobs:
           path: test-results/
         continue-on-error: true
 
-      # Build full HTML summary of the pipeline
       - name: Build email body
         id: email-body
         uses: actions/github-script@v7
@@ -797,7 +729,6 @@ jobs:
           RESULT_DEPLOY_STAGING: ${{ needs.deploy-staging.result }}
           RESULT_DEPLOY_PRODUCTION: ${{ needs.deploy-production.result }}
 
-      # Send email — test report attached as HTML
       - name: Send pipeline report email
         uses: dawidd6/action-send-mail@v3
         with:
@@ -813,7 +744,6 @@ jobs:
           attachments: test-results/surefire-reports/*.xml
           ignore_cert: false
 
-      # Also post a summary comment on PRs
       - name: Post pipeline summary on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7

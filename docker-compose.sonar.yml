@@ -1,11 +1,5 @@
 version: "3.9"
 
-# ──────────────────────────────────────────────────────────────────────
-# Run SonarQube locally — free Community Edition
-# Start:   docker compose -f docker-compose.sonar.yml up -d
-# Access:  http://localhost:9000
-# Login:   admin / admin  (change on first login)
-# ──────────────────────────────────────────────────────────────────────
 services:
   sonarqube:
     image: sonarqube:10.4-community
