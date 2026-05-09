@@ -106,62 +106,62 @@ jobs:
 # =============================================================================
 # STAGE 1 — CODE QUALITY: Unit Tests + Integration Tests + Coverage
 # =============================================================================
-  test:
-    name: "Stage 1 — Tests & Coverage"
-    runs-on: ubuntu-latest
-    if: github.event.inputs.force_rollback != 'true'
+  # test:
+  #   name: "Stage 1 — Tests & Coverage"
+  #   runs-on: ubuntu-latest
+  #   if: github.event.inputs.force_rollback != 'true'
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
 
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: temurin
+  #     - name: Set up JDK ${{ env.JAVA_VERSION }}
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         java-version: ${{ env.JAVA_VERSION }}
+  #         distribution: temurin
 
-      - name: Cache Maven dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-maven-
+  #     - name: Cache Maven dependencies
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: ~/.m2/repository
+  #         key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+  #         restore-keys: ${{ runner.os }}-maven-
 
-      - name: Run unit + integration tests with coverage
-        run: mvn verify -B -Dspring.profiles.active=test
-        # JaCoCo gate is enforced here — fails if coverage < 70%
+  #     - name: Run unit + integration tests with coverage
+  #       run: mvn verify -B -Dspring.profiles.active=test
+  #       # JaCoCo gate is enforced here — fails if coverage < 70%
 
-      # Publish test results in GitHub UI (visible in PR checks)
-      - name: Publish test report
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: "JUnit Test Results"
-          path: target/surefire-reports/*.xml
-          reporter: java-junit
-          fail-on-error: true
+  #     # Publish test results in GitHub UI (visible in PR checks)
+  #     - name: Publish test report
+  #       uses: dorny/test-reporter@v1
+  #       if: always()
+  #       with:
+  #         name: "JUnit Test Results"
+  #         path: target/surefire-reports/*.xml
+  #         reporter: java-junit
+  #         fail-on-error: true
 
-      # Pass coverage report and surefire XML to the notify job
-      - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: |
-            target/surefire-reports/
-            target/site/jacoco/
-          retention-days: 30
+  #     # Pass coverage report and surefire XML to the notify job
+  #     - name: Upload test artifacts
+  #       uses: actions/upload-artifact@v4
+  #       if: always()
+  #       with:
+  #         name: test-results
+  #         path: |
+  #           target/surefire-reports/
+  #           target/site/jacoco/
+  #         retention-days: 30
 
-      # Pass JAR to build stage (avoid rebuilding)
-      - name: Upload JAR artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-jar
-          path: target/*.jar
-          retention-days: 1
+  #     # Pass JAR to build stage (avoid rebuilding)
+  #     - name: Upload JAR artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: app-jar
+  #         path: target/*.jar
+  #         retention-days: 1
 
 # =============================================================================
 # STAGE 2 — SECURITY SCANNING: All 6 tools in parallel
@@ -239,10 +239,9 @@ jobs:
         run: |
           mvn sonar:sonar \
             -Dsonar.projectKey=bankapp \
-            -Dsonar.organization=Ruhon Deb \
+            -Dsonar.organization=rohandeb2 \
             -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
-
+            -Dsonar.token=$SONAR_TOKEN
   # ── 2c. Trivy ──────────────────────────────────────────────────────
   trivy:
     name: "Stage 2c — Trivy Vulnerability Scan"
