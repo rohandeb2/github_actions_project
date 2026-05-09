@@ -310,6 +310,12 @@ jobs:
             -DnvdApiKey=${{ secrets.NVD_API_KEY }}
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - name: Save OWASP NVD cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-nvd-${{ runner.os }}-${{ steps.date.outputs.date }}
   # ── 2e. TFLint ─────────────────────────────────────────────────────
   tflint:
     name: "Stage 2e — TFLint"
@@ -661,6 +667,7 @@ jobs:
   notify:
     name: "Notify — Email Report"
     runs-on: ubuntu-latest
+    environment: production
     if: always() && github.event.inputs.force_rollback != 'true'
     needs:
       - test
