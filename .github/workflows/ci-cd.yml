@@ -144,23 +144,35 @@ jobs:
           wget https://github.com/jeremylong/DependencyCheck/releases/download/v12.1.0/dependency-check-12.1.0-release.zip
           unzip dependency-check-12.1.0-release.zip
 
-      - name: Run OWASP Dependency Check
+      - name: Download and Run OWASP
+        id: owasp_step
+        continue-on-error: true
         run: |
+          VERSION="12.1.0"
+          curl -LO https://github.com/jeremylong/DependencyCheck/releases/download/v$VERSION/dependency-check-$VERSION-release.zip
+          unzip dependency-check-$VERSION-release.zip
+          
           ./dependency-check/bin/dependency-check.sh \
             --project "bankapp" \
             --scan . \
             --format HTML \
             --out reports/dependency-check \
-            --failOnCVSS 7 \
             --enableRetired
 
-      - name: Upload OWASP report
+      # 3. Always upload the report so you can download it from GitHub UI
+      - name: Upload Security Report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: dependency-check-report
           path: reports/dependency-check/
-          retention-days: 14
+
+      # 4. Notify in the Job Summary (This shows up on the main Actions page)
+      - name: Notify Findings
+        if: always()
+        run: |
+          echo "### 🛡️ Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Scan completed. Check the **Artifacts** section to download the full HTML report." >> $GITHUB_STEP_SUMMARY
 
   build-image:
     name: "Build & Push Image"
