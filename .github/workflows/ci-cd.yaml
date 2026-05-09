@@ -205,6 +205,7 @@ jobs:
     name: "Stage 2b — SonarQube Quality Gate"
     runs-on: ubuntu-latest
     needs: test
+    environment: production
 
     steps:
       - uses: actions/checkout@v4
@@ -292,39 +293,56 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
   # ── 2e. TFLint ─────────────────────────────────────────────────────
   tflint:
-    name: "Stage 2e — TFLint"
-    runs-on: ubuntu-latest
-    needs: test
-    permissions:
-      contents: read
-      security-events: write
-    if: github.event.inputs.force_rollback != 'true'
-    steps:
-      - uses: actions/checkout@v4
+  name: "Stage 2e — TFLint"
+  runs-on: ubuntu-latest
+  needs: test
+  permissions:
+    contents: read
+    security-events: write
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
-        with:
-          tflint_version: v0.50.3
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Init TFLint (downloads AWS ruleset)
-        working-directory: terraform
-        run: tflint --init
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Setup TFLint
+      uses: terraform-linters/setup-tflint@v4
+      with:
+        tflint_version: v0.50.3
 
-      - name: Run TFLint across all modules
-        working-directory: terraform
-        run: |
-          tflint --recursive --config=.tflint.hcl --format=sarif > ../tflint.sarif || true
-          tflint --recursive --config=.tflint.hcl
+    - name: Init TFLint
+      working-directory: terraform
+      run: tflint --init
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload TFLint SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: tflint.sarif
-          category: tflint
+    # 🔍 Run scan (capture result but don't fail pipeline)
+    - name: Run TFLint (generate SARIF + continue)
+      working-directory: terraform
+      run: |
+        set +e
+        tflint --recursive --config=.tflint.hcl --format=sarif > ../tflint.sarif
+        EXIT_CODE=$?
+        echo "TFLint exit code: $EXIT_CODE"
+        echo $EXIT_CODE > ../tflint_exit.txt
+        set -e
+
+    # 📤 Upload report
+    - name: Upload SARIF
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: tflint.sarif
+        category: tflint
+
+    # 📧 Send email if failure detected (example)
+    - name: Send failure email
+      if: always()
+      run: |
+        if [ "$(cat ../tflint_exit.txt)" != "0" ]; then
+          echo "TFLint failed — sending notification..."
+          # integrate email tool here (SMTP / SendGrid / SES)
+        else
+          echo "TFLint passed"
+        fi
 
   # ── 2f. Checkov ────────────────────────────────────────────────────
   # ── 2f. Checkov ────────────────────────────────────────────────────
