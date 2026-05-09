@@ -228,7 +228,12 @@
             cache-to: type=gha,mode=max
             provenance: true
             sbom: true
-
+        - name: Build local image for scan
+          uses: docker/build-push-action@v5
+          with:
+            context: .
+            load: true
+            tags: bankapp:local
         - name: Scan image with Trivy
           uses: aquasecurity/trivy-action@master
           with:
