@@ -320,6 +320,8 @@
       needs:
         - build-image
         - deploy-staging
+      permissions:
+        contents: write
 
       environment:
         name: production
