@@ -62,7 +62,6 @@ env:
   JAVA_VERSION: "21"
   REGISTRY: docker.io
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/bankapp
-  SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
   NOTIFY_EMAILS: "rohancyber8@gmail.com,ayushmanndeb38@gmail.com"
 
 # =============================================================================
@@ -239,15 +238,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           mvn sonar:sonar \
-            -DskipTests \
             -Dsonar.projectKey=bankapp \
-            -Dsonar.projectName="BankApp" \
-            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
-            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-            -Dsonar.java.binaries=target/classes \
-            -Dsonar.qualitygate.wait=true \
-            -Dsonar.qualitygate.timeout=300
+            -Dsonar.organization=<your-org> \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
 
   # ── 2c. Trivy ──────────────────────────────────────────────────────
   trivy:
