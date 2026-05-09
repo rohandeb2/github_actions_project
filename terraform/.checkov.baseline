@@ -1,0 +1,27 @@
+# Checkov baseline — known accepted risks with justification
+# Generate fresh with: checkov -d terraform/ --create-baseline
+#
+# Usage in CI:
+#   checkov -d terraform/ --baseline .checkov.baseline
+{
+  "failed_checks": [
+    {
+      "id": "CKV_AWS_130",
+      "bc_id": "BC_AWS_GENERAL_31",
+      "resource": "module.eks.aws_eks_cluster.main",
+      "check_id": "CKV_AWS_130",
+      "check_description": "Ensure EKS Cluster Control Plane is not publicly accessible",
+      "repo_file_path": "terraform/modules/eks/main.tf",
+      "file_abs_path": "terraform/modules/eks/main.tf",
+      "file_line_range": [1, 10],
+      "evaluation_context": null,
+      "check_result": "FAILED",
+      "code_block": null,
+      "file_path": "terraform/modules/eks/main.tf",
+      "resource_address": "module.eks.aws_eks_cluster.main",
+      "__all_values__": null,
+      "justification": "Public endpoint required for GitHub Actions CI runners until private runner setup is complete. Tracked in ticket BANK-123. Review Q2 2025."
+    }
+  ],
+  "version": "0.5"
+}
