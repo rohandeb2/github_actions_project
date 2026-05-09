@@ -238,7 +238,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           mvn sonar:sonar \
-            -Dsonar.projectKey=bankapp \
+            -Dsonar.projectKey=rohandeb2_github_actions_project \
             -Dsonar.organization=rohandeb2 \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.token=$SONAR_TOKEN
