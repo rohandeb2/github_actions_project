@@ -1,0 +1,76 @@
+# ================================================================
+# ADVANCED CONCEPT: Reusable Workflow (workflow_call)
+#
+# This is a shared "library workflow" — any other workflow in this
+# repo (or even other repos in the org) can call this.
+#
+# Benefits:
+#   - DRY: write smoke tests once, use in staging + production
+#   - Versioned: pin to a tag (@v1) for stability
+#   - Isolated permissions: caller grants only what's needed
+# ================================================================
+
+name: Reusable — Health Check
+
+on:
+  workflow_call:
+    inputs:
+      base-url:
+        required: true
+        type: string
+        description: "Base URL to health check (e.g. http://localhost:8080)"
+      retries:
+        required: false
+        type: number
+        default: 12
+      environment-name:
+        required: true
+        type: string
+    secrets:
+      SLACK_WEBHOOK:
+        required: false
+    # ADVANCED: Outputs — caller can read these values
+    outputs:
+      health-status:
+        description: "healthy or unhealthy"
+        value: ${{ jobs.check.outputs.status }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.probe.outputs.status }}
+
+    steps:
+      - name: Health probe
+        id: probe
+        run: |
+          BASE_URL="${{ inputs.base-url }}"
+          RETRIES="${{ inputs.retries }}"
+          STATUS="unhealthy"
+
+          for i in $(seq 1 $RETRIES); do
+            HTTP_CODE=$(curl -so /dev/null -w "%{http_code}" "${BASE_URL}/actuator/health" || echo "000")
+            echo "Attempt $i/$RETRIES — HTTP $HTTP_CODE"
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              STATUS="healthy"
+              break
+            fi
+            sleep 10
+          done
+
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+          if [ "$STATUS" = "unhealthy" ]; then
+            echo "Health check FAILED for ${{ inputs.environment-name }}"
+            exit 1
+          fi
+
+      - name: Notify Slack on failure
+        if: failure() && inputs.environment-name == 'production'
+        run: |
+          # ADVANCED: Only page on-call for production failures
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"🔴 *${{ inputs.environment-name }}* health check FAILED on commit ${{ github.sha }}\"}" \
+            ${{ secrets.SLACK_WEBHOOK }} || true

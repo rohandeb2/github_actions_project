@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "BankApp Postgres",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "bankdb",
+      "Username": "bankuser",
+      "Password": "bankpass",
+      "SSLMode": "prefer",
+      "SavePassword": true
+    }
+  }
+}

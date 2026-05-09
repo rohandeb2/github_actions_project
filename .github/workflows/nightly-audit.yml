@@ -1,0 +1,68 @@
+# ================================================================
+# ADVANCED CONCEPT: Scheduled workflow + dependency audit
+#
+# Runs every night to catch NEW vulnerabilities in existing deps
+# even when no code has changed. Critical for compliance.
+# ================================================================
+
+name: Nightly Security Audit
+
+on:
+  schedule:
+    - cron: "0 1 * * *"        # 1 AM UTC every night
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write             # to auto-create GitHub issues on findings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      # ADVANCED: OWASP audit with auto-issue creation
+      - name: Run OWASP Dependency Check
+        run: |
+          mvn org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=7 \
+            -DsuppressionFile=.github/owasp-suppressions.xml || AUDIT_FAILED=true
+
+          echo "AUDIT_FAILED=${AUDIT_FAILED:-false}" >> $GITHUB_ENV
+
+      # ADVANCED: Auto-create a GitHub Issue if vulnerabilities found
+      # So the team sees it in the issue tracker, not just in pipeline logs
+      - name: Create issue on vulnerability found
+        if: env.AUDIT_FAILED == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `[Security] Dependency vulnerabilities found — ${today}`;
+
+            // Check if issue already open to avoid duplicates
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security'
+            });
+
+            const existing = issues.find(i => i.title === title);
+            if (!existing) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: `The nightly OWASP dependency audit found vulnerabilities with CVSS >= 7.\n\n**Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\nPlease review the dependency-check report and update affected dependencies.`,
+                labels: ['security', 'automated']
+              });
+            }
