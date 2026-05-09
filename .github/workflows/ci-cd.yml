@@ -367,22 +367,19 @@
     rollback:
       name: "Rollback Production"
       runs-on: ubuntu-latest
-      if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
-
-      environment:
-        name: production
+      needs: deploy-production
+      if: needs.deploy-production.result == 'failure'
 
       steps:
-        - name: Rollback to previous image
-          run: |
-            echo "Fetching last successful deployment sha..."
-            echo "Rolling back to previous known-good image"
+        - name: Checkout
+          uses: actions/checkout@v4
 
-        - name: Notify rollback
-          uses: actions/github-script@v7
-          with:
-            script: |
-              console.log("Production rollback triggered");
+        - name: Rollback to previous version
+          run: |
+            echo "Rolling back production..."
+            echo "Deploying previous stable image"
+            docker compose -f docker-compose.yml down
+            docker compose -f docker-compose.yml up -d
 
     notify:
       name: "Pipeline Notification"
