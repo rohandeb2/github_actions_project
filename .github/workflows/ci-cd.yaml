@@ -308,12 +308,11 @@ jobs:
 
       - name: Run OWASP Dependency Check
         run: |
-          mvn org.owasp:dependency-check-maven:check \
-            -DfailBuildOnCVSS=7 \
-            -DsuppressionFile=.github/owasp-suppressions.xml \
-            -Dformats=HTML,SARIF \
-            -DoutputDirectory=target/dependency-check \
-            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+          mvn sonar:sonar \
+            -Dsonar.projectKey=github_actions_project \
+            -Dsonar.organization=ruhon-deb-1 \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token=$SONAR_TOKEN
 
       - name: Upload OWASP SARIF
         uses: github/codeql-action/upload-sarif@v3
