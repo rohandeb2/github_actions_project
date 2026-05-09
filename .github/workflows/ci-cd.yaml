@@ -54,6 +54,10 @@ concurrency:
   group: production-pipeline-${{ github.ref }}
   cancel-in-progress: false   # NEVER cancel a prod pipeline mid-run
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
 env:
   JAVA_VERSION: "21"
   REGISTRY: docker.io
