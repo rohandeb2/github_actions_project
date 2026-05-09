@@ -241,7 +241,8 @@ jobs:
             -Dsonar.projectKey=rohandeb2_github_actions_project \
             -Dsonar.organization=rohandeb2 \
             -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.token=$SONAR_TOKEN
+            -Dsonar.token=$SONAR_TOKEN \
+            -Dsonar.projectName=bankapp
   # ── 2c. Trivy ──────────────────────────────────────────────────────
   trivy:
     name: "Stage 2c — Trivy Vulnerability Scan"
