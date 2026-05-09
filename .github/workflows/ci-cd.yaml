@@ -106,62 +106,62 @@ jobs:
 # =============================================================================
 # STAGE 1 — CODE QUALITY: Unit Tests + Integration Tests + Coverage
 # =============================================================================
-  # test:
-  #   name: "Stage 1 — Tests & Coverage"
-  #   runs-on: ubuntu-latest
-  #   if: github.event.inputs.force_rollback != 'true'
+  test:
+    name: "Stage 1 — Tests & Coverage"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.force_rollback != 'true'
 
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  #     - name: Set up JDK ${{ env.JAVA_VERSION }}
-  #       uses: actions/setup-java@v4
-  #       with:
-  #         java-version: ${{ env.JAVA_VERSION }}
-  #         distribution: temurin
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
 
-  #     - name: Cache Maven dependencies
-  #       uses: actions/cache@v4
-  #       with:
-  #         path: ~/.m2/repository
-  #         key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-  #         restore-keys: ${{ runner.os }}-maven-
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
 
-  #     - name: Run unit + integration tests with coverage
-  #       run: mvn verify -B -Dspring.profiles.active=test
-  #       # JaCoCo gate is enforced here — fails if coverage < 70%
+      - name: Run unit + integration tests with coverage
+        run: mvn verify -B -Dspring.profiles.active=test
+        # JaCoCo gate is enforced here — fails if coverage < 70%
 
-  #     # Publish test results in GitHub UI (visible in PR checks)
-  #     - name: Publish test report
-  #       uses: dorny/test-reporter@v1
-  #       if: always()
-  #       with:
-  #         name: "JUnit Test Results"
-  #         path: target/surefire-reports/*.xml
-  #         reporter: java-junit
-  #         fail-on-error: true
+      # Publish test results in GitHub UI (visible in PR checks)
+      - name: Publish test report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "JUnit Test Results"
+          path: target/surefire-reports/*.xml
+          reporter: java-junit
+          fail-on-error: true
 
-  #     # Pass coverage report and surefire XML to the notify job
-  #     - name: Upload test artifacts
-  #       uses: actions/upload-artifact@v4
-  #       if: always()
-  #       with:
-  #         name: test-results
-  #         path: |
-  #           target/surefire-reports/
-  #           target/site/jacoco/
-  #         retention-days: 30
+      # Pass coverage report and surefire XML to the notify job
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+          retention-days: 30
 
-  #     # Pass JAR to build stage (avoid rebuilding)
-  #     - name: Upload JAR artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: app-jar
-  #         path: target/*.jar
-  #         retention-days: 1
+      # Pass JAR to build stage (avoid rebuilding)
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          retention-days: 1
 
 # =============================================================================
 # STAGE 2 — SECURITY SCANNING: All 6 tools in parallel
@@ -274,269 +274,269 @@ jobs:
           category: trivy
 
   # ── 2d. OWASP Dependency Check ─────────────────────────────────────
-#   owasp:
-#     name: "Stage 2d — OWASP Dependency Check"
-#     runs-on: ubuntu-latest
-#     needs: test
-#     if: github.event.inputs.force_rollback != 'true'
-#     permissions:
-#       contents: read
-#       security-events: write
-#     steps:
-#       - uses: actions/checkout@v4
+  owasp:
+    name: "Stage 2d — OWASP Dependency Check"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
 
-#       - uses: actions/setup-java@v4
-#         with:
-#           java-version: ${{ env.JAVA_VERSION }}
-#           distribution: temurin
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
 
-#       - name: Cache Maven
-#         uses: actions/cache@v4
-#         with:
-#           path: ~/.m2/repository
-#           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-#           restore-keys: ${{ runner.os }}-maven-
+      - name: Cache Maven
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
 
-#       - name: Cache OWASP NVD database
-#         uses: actions/cache@v4
-#         with:
-#           path: ~/.m2/repository/org/owasp
-#           key: owasp-nvd-${{ hashFiles('**/pom.xml') }}-${{ github.run_number }}
-#           restore-keys: |
-#             owasp-nvd-${{ hashFiles('**/pom.xml') }}-
-#             owasp-nvd-
+      - name: Cache OWASP NVD database
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp
+          key: owasp-nvd-${{ hashFiles('**/pom.xml') }}-${{ github.run_number }}
+          restore-keys: |
+            owasp-nvd-${{ hashFiles('**/pom.xml') }}-
+            owasp-nvd-
 
-#       - name: Run OWASP Dependency Check
-#         run: |
-#           mvn org.owasp:dependency-check-maven:check \
-#             -DfailBuildOnCVSS=7 \
-#             -DsuppressionFile=.github/owasp-suppressions.xml \
-#             -Dformats=HTML,SARIF \
-#             -DoutputDirectory=target/dependency-check \
-#             -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+      - name: Run OWASP Dependency Check
+        run: |
+          mvn org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=7 \
+            -DsuppressionFile=.github/owasp-suppressions.xml \
+            -Dformats=HTML,SARIF \
+            -DoutputDirectory=target/dependency-check \
+            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
 
-#       - name: Upload OWASP SARIF
-#         uses: github/codeql-action/upload-sarif@v3
-#         if: always()
-#         with:
-#           sarif_file: target/dependency-check/dependency-check-report.sarif
-#           category: owasp-dependency-check
+      - name: Upload OWASP SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: target/dependency-check/dependency-check-report.sarif
+          category: owasp-dependency-check
 
-#       - name: Upload OWASP HTML report artifact
-#         uses: actions/upload-artifact@v4
-#         if: always()
-#         with:
-#           name: owasp-report
-#           path: target/dependency-check/
-#           retention-days: 30
+      - name: Upload OWASP HTML report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owasp-report
+          path: target/dependency-check/
+          retention-days: 30
 
-#   # ── 2e. TFLint ─────────────────────────────────────────────────────
-#   tflint:
-#     name: "Stage 2e — TFLint"
-#     runs-on: ubuntu-latest
-#     needs: test
-#     if: github.event.inputs.force_rollback != 'true'
-#     steps:
-#       - uses: actions/checkout@v4
+  # ── 2e. TFLint ─────────────────────────────────────────────────────
+  tflint:
+    name: "Stage 2e — TFLint"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    steps:
+      - uses: actions/checkout@v4
 
-#       - name: Setup TFLint
-#         uses: terraform-linters/setup-tflint@v4
-#         with:
-#           tflint_version: v0.50.3
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.3
 
-#       - name: Init TFLint (downloads AWS ruleset)
-#         working-directory: terraform
-#         run: tflint --init
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Init TFLint (downloads AWS ruleset)
+        working-directory: terraform
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-#       - name: Run TFLint across all modules
-#         working-directory: terraform
-#         run: |
-#           tflint --recursive --config=.tflint.hcl --format=sarif > ../tflint.sarif || true
-#           tflint --recursive --config=.tflint.hcl
+      - name: Run TFLint across all modules
+        working-directory: terraform
+        run: |
+          tflint --recursive --config=.tflint.hcl --format=sarif > ../tflint.sarif || true
+          tflint --recursive --config=.tflint.hcl
 
-#       - name: Upload TFLint SARIF
-#         uses: github/codeql-action/upload-sarif@v3
-#         if: always()
-#         with:
-#           sarif_file: tflint.sarif
-#           category: tflint
+      - name: Upload TFLint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: tflint.sarif
+          category: tflint
 
-#   # ── 2f. Checkov ────────────────────────────────────────────────────
-#   checkov:
-#     name: "Stage 2f — Checkov IaC Scan"
-#     runs-on: ubuntu-latest
-#     needs: test
-#     if: github.event.inputs.force_rollback != 'true'
-#     permissions:
-#       contents: read
-#       security-events: write
-#     steps:
-#       - uses: actions/checkout@v4
+  # ── 2f. Checkov ────────────────────────────────────────────────────
+  checkov:
+    name: "Stage 2f — Checkov IaC Scan"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.force_rollback != 'true'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
 
-#       - name: Checkov — Terraform scan
-#         uses: bridgecrewio/checkov-action@master
-#         with:
-#           directory: terraform/
-#           framework: terraform
-#           output_format: sarif
-#           output_file_path: checkov-tf.sarif
-#           baseline: terraform/.checkov.baseline
-#           soft_fail: false
+      - name: Checkov — Terraform scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-tf.sarif
+          baseline: terraform/.checkov.baseline
+          soft_fail: false
 
-#       - name: Upload Checkov Terraform SARIF
-#         uses: github/codeql-action/upload-sarif@v3
-#         if: always()
-#         with:
-#           sarif_file: checkov-tf.sarif
-#           category: checkov-terraform
+      - name: Upload Checkov Terraform SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-tf.sarif
+          category: checkov-terraform
 
-#       - name: Checkov — Dockerfile scan
-#         uses: bridgecrewio/checkov-action@master
-#         with:
-#           directory: .
-#           framework: dockerfile
-#           output_format: sarif
-#           output_file_path: checkov-docker.sarif
-#           soft_fail: true
+      - name: Checkov — Dockerfile scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: true
 
-#       - name: Upload Checkov Dockerfile SARIF
-#         uses: github/codeql-action/upload-sarif@v3
-#         if: always()
-#         with:
-#           sarif_file: checkov-docker.sarif
-#           category: checkov-dockerfile
+      - name: Upload Checkov Dockerfile SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-docker.sarif
+          category: checkov-dockerfile
 
-# # =============================================================================
-# # SECURITY GATE — all 6 scanners must pass before build proceeds
-# # =============================================================================
-#   security-gate:
-#     name: "Security Gate"
-#     runs-on: ubuntu-latest
-#     if: github.event.inputs.force_rollback != 'true'
-#     needs: [semgrep, sonarqube, trivy, owasp, tflint, checkov]
+# =============================================================================
+# SECURITY GATE — all 6 scanners must pass before build proceeds
+# =============================================================================
+  security-gate:
+    name: "Security Gate"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.force_rollback != 'true'
+    needs: [semgrep, sonarqube, trivy, owasp, tflint, checkov]
 
-#     steps:
-#       - name: Evaluate all scanner results
-#         id: gate
-#         uses: actions/github-script@v7
-#         with:
-#           script: |
-#             const results = {
-#               'Semgrep':  '${{ needs.semgrep.result }}',
-#               'SonarQube':'${{ needs.sonarqube.result }}',
-#               'Trivy':    '${{ needs.trivy.result }}',
-#               'OWASP':    '${{ needs.owasp.result }}',
-#               'TFLint':   '${{ needs.tflint.result }}',
-#               'Checkov':  '${{ needs.checkov.result }}',
-#             };
-#             const failed = Object.entries(results)
-#               .filter(([,r]) => r === 'failure')
-#               .map(([name]) => name);
-#             if (failed.length > 0) {
-#               core.setFailed(`Security gate blocked by: ${failed.join(', ')}`);
-#             }
-#             core.setOutput('summary', JSON.stringify(results));
+    steps:
+      - name: Evaluate all scanner results
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              'Semgrep':  '${{ needs.semgrep.result }}',
+              'SonarQube':'${{ needs.sonarqube.result }}',
+              'Trivy':    '${{ needs.trivy.result }}',
+              'OWASP':    '${{ needs.owasp.result }}',
+              'TFLint':   '${{ needs.tflint.result }}',
+              'Checkov':  '${{ needs.checkov.result }}',
+            };
+            const failed = Object.entries(results)
+              .filter(([,r]) => r === 'failure')
+              .map(([name]) => name);
+            if (failed.length > 0) {
+              core.setFailed(`Security gate blocked by: ${failed.join(', ')}`);
+            }
+            core.setOutput('summary', JSON.stringify(results));
 
-# # =============================================================================
-# # STAGE 3 — BUILD: Docker image build, sign, push
-# # =============================================================================
-#   build:
-#     name: "Stage 3 — Docker Build & Push"
-#     runs-on: ubuntu-latest
-#     needs: security-gate
-#     if: github.event.inputs.force_rollback != 'true'
+# =============================================================================
+# STAGE 3 — BUILD: Docker image build, sign, push
+# =============================================================================
+  build:
+    name: "Stage 3 — Docker Build & Push"
+    runs-on: ubuntu-latest
+    needs: security-gate
+    if: github.event.inputs.force_rollback != 'true'
 
-#     outputs:
-#       image-tag:    ${{ steps.meta.outputs.tags }}
-#       image-digest: ${{ steps.build.outputs.digest }}
-#       short-sha:    sha-${{ github.sha }}
+    outputs:
+      image-tag:    ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      short-sha:    sha-${{ github.sha }}
 
-#     permissions:
-#       contents: read
-#       packages: write
-#       id-token: write       # for OIDC / image signing
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # for OIDC / image signing
 
-#     steps:
-#       - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-#       - name: Set up Docker Buildx
-#         uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-#       - name: Login to Docker Hub
-#         uses: docker/login-action@v3
-#         with:
-#           username: ${{ secrets.DOCKERHUB_USERNAME }}
-#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-#       - name: Extract image metadata
-#         id: meta
-#         uses: docker/metadata-action@v5
-#         with:
-#           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-#           tags: |
-#             type=sha,prefix=sha-
-#             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-#             type=ref,event=branch
-#             type=ref,event=pr
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=branch
+            type=ref,event=pr
 
-#       - name: Build and push
-#         id: build
-#         uses: docker/build-push-action@v5
-#         with:
-#           context: .
-#           push: ${{ github.ref == 'refs/heads/main' }}
-#           tags: ${{ steps.meta.outputs.tags }}
-#           labels: ${{ steps.meta.outputs.labels }}
-#           cache-from: type=gha
-#           cache-to: type=gha,mode=max
-#           provenance: true      # SLSA provenance attestation
-#           sbom: true            # Software Bill of Materials
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true      # SLSA provenance attestation
+          sbom: true            # Software Bill of Materials
 
-#       - name: Trivy — scan built image (final gate)
-#         uses: aquasecurity/trivy-action@master
-#         with:
-#           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
-#           format: table
-#           exit-code: "1"
-#           severity: CRITICAL
+      - name: Trivy — scan built image (final gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
 
-# # =============================================================================
-# # STAGE 4 — DEPLOY STAGING
-# # =============================================================================
-#   deploy-staging:
-#     name: "Stage 4 — Deploy Staging"
-#     runs-on: ubuntu-latest
-#     needs: build
-#     if: github.ref == 'refs/heads/main' && github.event.inputs.force_rollback != 'true'
+# =============================================================================
+# STAGE 4 — DEPLOY STAGING
+# =============================================================================
+  deploy-staging:
+    name: "Stage 4 — Deploy Staging"
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event.inputs.force_rollback != 'true'
 
-#     environment:
-#       name: staging
-#       url: http://staging.bankapp.local:8080
+    environment:
+      name: staging
+      url: http://staging.bankapp.local:8080
 
-#     steps:
-#       - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-#       - name: Deploy to staging
-#         env:
-#           IMAGE_TAG: sha-${{ github.sha }}
-#         run: |
-#           echo "Deploying ${{ env.IMAGE_NAME }}:${IMAGE_TAG} to staging"
-#           export IMAGE_TAG=${IMAGE_TAG}
-#           docker compose -f docker-compose.yml up -d --pull always
+      - name: Deploy to staging
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          echo "Deploying ${{ env.IMAGE_NAME }}:${IMAGE_TAG} to staging"
+          export IMAGE_TAG=${IMAGE_TAG}
+          docker compose -f docker-compose.yml up -d --pull always
 
-#       - name: Staging smoke test
-#         run: |
-#           echo "Waiting for app to be healthy..."
-#           for i in $(seq 1 12); do
-#             HTTP=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
-#             if [ "$HTTP" = "200" ]; then echo "Staging healthy"; exit 0; fi
-#             echo "Attempt $i/12 — HTTP $HTTP, retrying..."
-#             sleep 10
-#           done
-#           echo "Staging smoke test FAILED"
-#           exit 1
+      - name: Staging smoke test
+        run: |
+          echo "Waiting for app to be healthy..."
+          for i in $(seq 1 12); do
+            HTTP=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
+            if [ "$HTTP" = "200" ]; then echo "Staging healthy"; exit 0; fi
+            echo "Attempt $i/12 — HTTP $HTTP, retrying..."
+            sleep 10
+          done
+          echo "Staging smoke test FAILED"
+          exit 1
 
 # =============================================================================
 # STAGE 5 — DEPLOY PRODUCTION (manual approval gate)
