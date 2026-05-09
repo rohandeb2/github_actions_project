@@ -139,17 +139,19 @@ jobs:
         with:
           sarif_file: "trivy-results.sarif"
 
-      - name: OWASP Dependency Check
-        uses: dependency-check/Dependency-Check_Action@main
-        env:
-          JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.15-6/x64
-        with:
-          project: "bankapp"
-          path: "."
-          format: "HTML"
-          out: "reports/dependency-check"
-          args: >
-            --failOnCVSS 7
+      - name: Setup Dependency Check
+        run: |
+          wget https://github.com/jeremylong/DependencyCheck/releases/download/v12.1.0/dependency-check-12.1.0-release.zip
+          unzip dependency-check-12.1.0-release.zip
+
+      - name: Run OWASP Dependency Check
+        run: |
+          ./dependency-check/bin/dependency-check.sh \
+            --project "bankapp" \
+            --scan . \
+            --format HTML \
+            --out reports/dependency-check \
+            --failOnCVSS 7 \
             --enableRetired
 
       - name: Upload OWASP report
