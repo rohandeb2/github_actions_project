@@ -239,7 +239,7 @@ jobs:
         run: |
           mvn sonar:sonar \
             -Dsonar.projectKey=bankapp \
-            -Dsonar.organization=<your-org> \
+            -Dsonar.organization=Ruhon Deb \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.token=${{ secrets.SONAR_TOKEN }}
 
