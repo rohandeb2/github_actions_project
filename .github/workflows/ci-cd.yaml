@@ -297,7 +297,8 @@ jobs:
           mvn org.owasp:dependency-check-maven:check \
             -DfailBuildOnCVSS=7 \
             -Dformats=HTML,SARIF \
-            -DoutputDirectory=target/dependency-check
+            -DoutputDirectory=target/dependency-check \
+            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
   # ── 2e. TFLint ─────────────────────────────────────────────────────
